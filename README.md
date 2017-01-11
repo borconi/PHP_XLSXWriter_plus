@@ -56,6 +56,23 @@ $writer->writeSheet($data);
 $writer->writeToFile('output.xlsx');
 ```
 
+
+Hyperlink example:
+```php
+$data = array(
+    array('year','month','amount',link),
+    array('2003','1','220',array("text"=>"Click me","link"=>"http://www.google.com")),
+    array('2003','2','153.5',array("text"=>"Click me","link"=>"http://www.amazon.com")),
+);
+
+$writer = new XLSXWriter();
+$writer->writeSheet($data);
+
+header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+header('Content-Disposition: attachment; filename="sample.xlsx"');
+$writer->writeToString();
+```
+
 Multiple Sheets:
 ```php
 $data1 = array(  
