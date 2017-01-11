@@ -59,6 +59,7 @@ Class XLSXWriter
 		if (!empty($this->temp_files)) {
 			foreach($this->temp_files as $temp_file) {
 				@unlink($temp_file);
+				@unlink($temp_file.".rels");
 			}
 		}
 	}
@@ -100,8 +101,10 @@ Class XLSXWriter
 		$zip->addFromString("_rels/.rels", self::buildRelationshipsXML());
 
 		$zip->addEmptyDir("xl/worksheets/");
+		$zip->addEmptyDir("xl/worksheets/_rels/");
 		foreach($this->sheets_meta as $sheet_meta) {
 			$zip->addFile($sheet_meta['filename'], "xl/worksheets/".$sheet_meta['xmlname'] );
+			$zip->addFile($sheet_meta['filename'].".rels", "xl/worksheets/_rels/".$sheet_meta['xmlname'].".rels" );
 		}
 		if (!empty($this->shared_strings)) {
 			$zip->addFile($this->writeSharedStringsXML(), "xl/sharedStrings.xml" );  //$zip->addFromString("xl/sharedStrings.xml",     self::buildSharedStringsXML() );
@@ -116,7 +119,7 @@ Class XLSXWriter
 	}
 
 	
-	public function writeSheet(array $data, $sheet_name='', array $header_types=array(), array $styles )
+	public function writeSheet(array $data, $sheet_name='', array $header_types=array(), array $styles=array() )
 	{
 		for ($i = 0; $i < count($styles); $i++) {
 			$styles[$i] += array('sheet' => $sheet_name);
@@ -124,8 +127,9 @@ Class XLSXWriter
 		$this->setStyle(array_merge((array)$this->defaultStyle, (array)$styles));
 
 		$data = empty($data) ? array( array('') ) : $data;
-
+		$link = array();
 		$sheet_filename = $this->tempFilename();
+		
 		$sheet_default = 'Sheet'.(count($this->sheets_meta)+1);
 		$sheet_name = !empty($sheet_name) ? $sheet_name : $sheet_default;
 		$this->sheets_meta[] = array('filename'=>$sheet_filename, 'sheetname'=>$sheet_name ,'xmlname'=>strtolower($sheet_default).".xml" );
@@ -140,7 +144,12 @@ Class XLSXWriter
 		$header_row = empty($header_types) ? array() : array_keys($header_types);
 
 		$fd = fopen($sheet_filename, "w+");
+		$fd_rel=fopen($sheet_filename.".rels","w+");
 		if ($fd===false) { self::log("write failed in ".__CLASS__."::".__FUNCTION__."."); return; }
+		if ($fd_rel===false) { self::log("write failed in ".__CLASS__."::".__FUNCTION__."."); return; }
+		
+		fwrite($fd_rel,'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'."\n");
+		fwrite($fd_rel,'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">');
 		
 		fwrite($fd,'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'."\n");
 		fwrite($fd,'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
@@ -169,13 +178,31 @@ Class XLSXWriter
 		foreach($data as $i=>$row)
 		{
 			fwrite($fd, '<row collapsed="false" customFormat="false" customHeight="false" hidden="false" ht="12.1" outlineLevel="0" r="'.($i+$header_offset+1).'">');
-			foreach($row as $k=>$v)
+			$k=0;
+			foreach($row as $v)
 			{
-				$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v, $sheet_name);
+				if (is_array($v))
+					{
+						$col=(64+$this->defaultStartCol + $k);
+						$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v['text'], $sheet_name);	
+						$link[]=array('cellref'=>chr($col).($i+$header_offset+1),'link'=>str_replace("&","&amp;",$v['link']));
+					}
+				else
+					$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v, $sheet_name);
+				$k++;
 			}
 			fwrite($fd, '</row>');
 		}
 		fwrite($fd,    '</sheetData>');
+		if (!empty($link))		{fwrite($fd, "<hyperlinks>");$i=1;}
+			foreach ($link as $row)
+			{
+				fwrite($fd, '<hyperlink ref="'.$row['cellref'].'" r:id="rId_hyperlink_'.$i.'"/>');
+				fwrite($fd_rel, '<Relationship Id="rId_hyperlink_'.$i.'" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="'.$row['link'].'" TargetMode="External"/>');
+				$i++;
+			}
+		if (!empty($link))		{fwrite($fd, "</hyperlinks>");fwrite($fd_rel,"</Relationships>\n");}
+	
 		fwrite($fd,    '<printOptions headings="false" gridLines="false" gridLinesSet="true" horizontalCentered="false" verticalCentered="false"/>');
 		fwrite($fd,    '<pageMargins left="0.5" right="0.5" top="1.0" bottom="1.0" header="0.5" footer="0.5"/>');
 		fwrite($fd,    '<pageSetup blackAndWhite="false" cellComments="none" copies="1" draft="false" firstPageNumber="1" fitToHeight="1" fitToWidth="1" horizontalDpi="300" orientation="portrait" pageOrder="downThenOver" paperSize="1" scale="100" useFirstPageNumber="true" usePrinterDefaults="false" verticalDpi="300"/>');
@@ -184,7 +211,9 @@ Class XLSXWriter
 		fwrite($fd,        '<oddFooter>&amp;C&amp;&quot;Times New Roman,Regular&quot;&amp;12Page &amp;P</oddFooter>');
 		fwrite($fd,    '</headerFooter>');
 		fwrite($fd,'</worksheet>');
+
 		fclose($fd);
+		fclose($fd_rel);
 	}
 
 	protected function writeCell($fd, $row_number, $column_number, $value, $sheet_name)
@@ -224,9 +253,9 @@ Class XLSXWriter
 		}
 		if (is_numeric($value)) {
 			fwrite($fd,'<c r="'.$cell.'" s="'.$s.'" t="n"><v>'.($value*1).'</v></c>');//int,float, etc
-		} else if ($cell_format=='date') {
+		} else if (@$cell_format=='date') {
 			fwrite($fd,'<c r="'.$cell.'" s="'.$s.'" t="n"><v>'.intval(self::convert_date_time($value)).'</v></c>');
-		} else if ($cell_format=='datetime') {
+		} else if (@$cell_format=='datetime') {
 			fwrite($fd,'<c r="'.$cell.'" s="'.$s.'" t="n"><v>'.self::convert_date_time($value).'</v></c>');
 		} else if ($value==''){
 			fwrite($fd,'<c r="'.$cell.'" s="'.$s.'"/>');
@@ -285,7 +314,7 @@ Class XLSXWriter
 							fwrite($fd, '		<color theme="1"/>');
 						}
 						fwrite($fd, '		<name val="'.$this->fontName.'"/>');
-						fwrite($fd, '		<fasmily val="2"/>');
+						fwrite($fd, '		<family val="2"/>');
 						if ($this->fontName == 'MS Sans Serif') {
 							fwrite($fd, '		<charset val="204"/>');
 						} else if ($this->fontName == 'Calibri') {
@@ -525,6 +554,7 @@ Class XLSXWriter
 		$content_types_xml.='<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">';
 		$content_types_xml.='<Override PartName="/_rels/.rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>';
 		$content_types_xml.='<Override PartName="/xl/_rels/workbook.xml.rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>';
+		$content_types_xml.='<Default ContentType="application/vnd.openxmlformats-package.relationships+xml" Extension="rels"/>';
 		foreach($this->sheets_meta as $i=>$sheet_meta) {
 			$content_types_xml.='<Override PartName="/xl/worksheets/'.($sheet_meta['xmlname']).'" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>';
 		}
