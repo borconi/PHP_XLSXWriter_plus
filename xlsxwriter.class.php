@@ -183,10 +183,11 @@ Class XLSXWriter
 			{
 				if (is_array($v))
 					{
-						$col=(64+$this->defaultStartCol + $k);
+						$n=($this->defaultStartCol + $k);
+						for($r = ""; $n >= 0; $n = intval($n / 26) - 1) {$r = chr($n%26 + 0x41) . $r;}
 						$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v['text'], $sheet_name);	
-						$link[]=array('cellref'=>chr($col).($i+$header_offset+1),'link'=>str_replace("&","&amp;",$v['link']));
-					}
+						$link[]=array('cellref'=>$r.($i+$header_offset+1),'link'=>str_replace("&","&amp;",$v['link']));
+				}
 				else
 					$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v, $sheet_name);
 				$k++;
