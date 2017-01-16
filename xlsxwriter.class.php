@@ -162,6 +162,11 @@ Class XLSXWriter
 	
 	public function writeSheet(array $data, $sheet_name='', array $header_types=array(), array $styles=array() )
 	{
+		//Reset the calcs for each sheet
+	    $this->font_max_width = array(); // keep a trak of the font + size max char width, we need this to calculate the autocolumn width
+	    $this->columns_width = array(); // keep track of each column width; 
+	    $this->columns_chars_length = array(); // keep track of each column width; 
+		
 		for ($i = 0; $i < count($styles); $i++) {
 			if (array_key_exists($i,$styles))
 				$styles[$i] += array('sheet' => $sheet_name);
