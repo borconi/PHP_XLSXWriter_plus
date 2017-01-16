@@ -72,6 +72,72 @@ header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetm
 header('Content-Disposition: attachment; filename="sample.xlsx"');
 $writer->writeToString();
 ```
+AutoWidth for columns, to be set in the style array
+- Can be used on specific column only
+- Can be set to whole style
+ 
+Exemple:
+
+```
+$styles=array (
+        array( // in each style element you can use or 'cells', or 'rows' or 'columns'.
+          'font' => array(
+            'name' => 'Calibri',
+            'size' => '12',
+            
+            'bold' => false,
+            'italic' => false,
+            'underline' => false,
+			'color' => 'ffffff'),
+          'border' => array(
+            'style' => 'thin',
+            'color' => '000000'),
+          'fill' => array(
+            'color' => '000000'),
+           'rows' => array('0'),
+          'wrapText' => false,
+		   'BestFit' => true,
+          'verticalAlign' => 'top',
+          'horizontalAlign' => 'left',
+          'format' => 5
+		 
+          ),
+      //'auto_width'=>array('0','2'),   //This will only set the width on 1st and 3rd columns (0 based index)
+		'auto_width'=>true   //All columns will have width calculated automatically
+				
+       );
+```
+
+Enable Autofilter - Boolean, to be set in Styles array. Defaul value is false.
+```
+$styles=array (
+        array( // in each style element you can use or 'cells', or 'rows' or 'columns'.
+          'font' => array(
+            'name' => 'Calibri',
+            'size' => '12',
+            
+            'bold' => false,
+            'italic' => false,
+            'underline' => false,
+			'color' => 'ffffff'),
+          'border' => array(
+            'style' => 'thin',
+            'color' => '000000'),
+          'fill' => array(
+            'color' => '000000'),
+           'rows' => array('0'),
+          'wrapText' => false,
+		   'BestFit' => true,
+          'verticalAlign' => 'top',
+          'horizontalAlign' => 'left',
+          'format' => 5
+		 
+          ),
+        'auto_filter'=>true
+				
+       );
+```
+
 
 Multiple Sheets:
 ```php
