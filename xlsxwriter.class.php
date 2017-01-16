@@ -42,6 +42,10 @@ Class XLSXWriter
 	protected $shared_strings = array();//unique set
 	protected $shared_string_count = 0;//count of non-unique references to the unique set
 	protected $temp_files = array();
+	
+	protected $font_max_width = array(); // keep a trak of the font + size max char width, we need this to calculate the autocolumn width
+	protected $columns_width = array(); // keep track of each column width; 
+	protected $columns_chars_length = array(); // keep track of each column width; 
 
 	public function __construct(){}
 	public function setAuthor($author='') { $this->author=$author; }
@@ -60,8 +64,45 @@ Class XLSXWriter
 			foreach($this->temp_files as $temp_file) {
 				@unlink($temp_file);
 				@unlink($temp_file.".rels");
+				@unlink($temp_file.".tmp");
 			}
 		}
+	}
+	
+	public function GetTextWidth($fontName, $fontsize, $text)
+	{
+	
+		
+	 if (array_key_exists($fontName,$this->font_max_width) && array_key_exists($fontsize,$this->font_max_width[$fontName]))
+	 {return round((strlen($text)*$this->font_max_width[$fontName][$fontsize] + 5) / $this->font_max_width[$fontName][$fontsize] * 256)/256;}
+	else
+		{
+			try {
+ 		    $im = new Imagick ();
+			$draw = new ImagickDraw ();
+			$draw->setFont ($fontName);
+			$draw->setFontSize ($fontsize);
+			$draw->setTextAlignment (Imagick::ALIGN_LEFT);
+			$maxwidth=0;
+			$metrics = $im->queryFontMetrics ($draw,"W"); // Silly approach take W as the max length
+			$maxwidth=$metrics['textWidth'];
+			/* If need be we can check which is the widest of the chars but that will have a significant hit on performance!
+			foreach(range('A','Z') as $letter) 
+				{ 
+				$metrics = $im->queryFontMetrics ($draw,$letter);
+				if ($maxwidth < $metrics['textWidth'])
+					$maxwidth=$metrics['textWidth'];
+				}
+				*/
+			$this->font_max_width[$fontName][$fontsize]=$maxwidth;
+			}
+			catch (Exception $e) {
+				//ImageMagick or font not available so we are doing silly calculations
+			 $this->font_max_width[$fontName][$fontsize]=$fontsize;
+			}
+		return round((strlen($text)*$this->font_max_width[$fontName][$fontsize] + 5) / $this->font_max_width[$fontName][$fontsize] * 256)/256;	
+	    }
+	
 	}
 	
 	protected function tempFilename()
@@ -122,7 +163,8 @@ Class XLSXWriter
 	public function writeSheet(array $data, $sheet_name='', array $header_types=array(), array $styles=array() )
 	{
 		for ($i = 0; $i < count($styles); $i++) {
-			$styles[$i] += array('sheet' => $sheet_name);
+			if (array_key_exists($i,$styles))
+				$styles[$i] += array('sheet' => $sheet_name);
 		}
 		$this->setStyle(array_merge((array)$this->defaultStyle, (array)$styles));
 
@@ -143,7 +185,7 @@ Class XLSXWriter
 		$cell_formats_arr = empty($header_types) ? array_fill(0, $column_count, 'string') : array_values($header_types);
 		$header_row = empty($header_types) ? array() : array_keys($header_types);
 
-		$fd = fopen($sheet_filename, "w+");
+		$fd = fopen($sheet_filename.".tmp", "w+");
 		$fd_rel=fopen($sheet_filename.".rels","w+");
 		if ($fd===false) { self::log("write failed in ".__CLASS__."::".__FUNCTION__."."); return; }
 		if ($fd_rel===false) { self::log("write failed in ".__CLASS__."::".__FUNCTION__."."); return; }
@@ -151,21 +193,7 @@ Class XLSXWriter
 		fwrite($fd_rel,'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'."\n");
 		fwrite($fd_rel,'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">');
 		
-		fwrite($fd,'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'."\n");
-		fwrite($fd,'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
-		fwrite($fd,    '<sheetPr filterMode="false">');
-		fwrite($fd,        '<pageSetUpPr fitToPage="false"/>');
-		fwrite($fd,    '</sheetPr>');
-		fwrite($fd,    '<dimension ref="A1:'.$max_cell.'"/>');
-		fwrite($fd,    '<sheetViews>');
-		fwrite($fd,        '<sheetView colorId="64" defaultGridColor="true" rightToLeft="false" showFormulas="false" showGridLines="true" showOutlineSymbols="true" showRowColHeaders="true" showZeros="true" tabSelected="'.$tabselected.'" topLeftCell="A1" view="normal" windowProtection="false" workbookViewId="0" zoomScale="100" zoomScaleNormal="100" zoomScalePageLayoutView="100">');
-		fwrite($fd,            '<selection activeCell="A1" activeCellId="0" pane="topLeft" sqref="A1"/>');
-		fwrite($fd,        '</sheetView>');
-		fwrite($fd,    '</sheetViews>');
-		fwrite($fd,    '<cols>');
-		fwrite($fd,        '<col collapsed="false" hidden="false" max="1025" min="1" style="0" width="11.5"/>');
-		fwrite($fd,    '</cols>');
-		fwrite($fd,    '<sheetData>');
+
 		if (!empty($header_row))
 		{
 			fwrite($fd, '<row collapsed="false" customFormat="false" customHeight="false" hidden="false" ht="12.1" outlineLevel="0" r="'.($this->defaultStartRow + 1).'">');
@@ -183,11 +211,15 @@ Class XLSXWriter
 			{
 				if (is_array($v))
 					{
-						$n=($this->defaultStartCol + $k);
-						for($r = ""; $n >= 0; $n = intval($n / 26) - 1) {$r = chr($n%26 + 0x41) . $r;}
+						$n=$this->defaultStartCol + $k;
+						for($r = ""; $n >= 0; $n = intval($n / 26) - 1) {
+						$r = chr($n%26 + 0x41) . $r;
+						}
+						
+						
 						$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v['text'], $sheet_name);	
 						$link[]=array('cellref'=>$r.($i+$header_offset+1),'link'=>str_replace("&","&amp;",$v['link']));
-				}
+					}
 				else
 					$this->writeCell($fd, $i+$header_offset, $this->defaultStartCol + $k, $v, $sheet_name);
 				$k++;
@@ -195,6 +227,9 @@ Class XLSXWriter
 			fwrite($fd, '</row>');
 		}
 		fwrite($fd,    '</sheetData>');
+		if (array_key_exists("auto_filter",$styles) && $styles['auto_filter'])  //Set AutoFilter data if it is enabled.
+								fwrite($fd,	   '<autoFilter ref="A1:'.$max_cell.'"/>');
+				
 		if (!empty($link))		{fwrite($fd, "<hyperlinks>");$i=1;}
 			foreach ($link as $row)
 			{
@@ -215,43 +250,205 @@ Class XLSXWriter
 
 		fclose($fd);
 		fclose($fd_rel);
+		$k--;
+		$fd = fopen($sheet_filename, "w+");
+		fwrite($fd,'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'."\n");
+		fwrite($fd,'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">');
+		fwrite($fd,    '<sheetPr filterMode="false">');
+		fwrite($fd,        '<pageSetUpPr fitToPage="false"/>');
+		fwrite($fd,    '</sheetPr>');
+		fwrite($fd,    '<dimension ref="A1:'.$max_cell.'"/>');
+		fwrite($fd,    '<sheetViews>');
+		fwrite($fd,        '<sheetView colorId="64" defaultGridColor="true" rightToLeft="false" showFormulas="false" showGridLines="true" showOutlineSymbols="true" showRowColHeaders="true" showZeros="true" tabSelected="'.$tabselected.'" topLeftCell="A1" view="normal" windowProtection="false" workbookViewId="0" zoomScale="100" zoomScaleNormal="100" zoomScalePageLayoutView="100">');
+		fwrite($fd,            '<selection activeCell="A1" activeCellId="0" pane="topLeft" sqref="A1"/>');
+		fwrite($fd,        '</sheetView>');
+		fwrite($fd,    '</sheetViews>');
+		fwrite($fd,    '<cols>');
+		
+	
+	
+		for ($i=0;$i<=$k;$i++)
+		{if (array_key_exists($i,$this->columns_width))
+				fwrite($fd, '<col style="0" customWidth="true" bestFit="true" width="'.$this->columns_width[$i].'" max="'.($i+1).'" min="'.($i+1).'"/>');
+			else
+				fwrite($fd, '<col collapsed="false"  bestFit="true" hidden="false" max="'.($i+1).'" min="'.($i+1).'" style="0" width="11.5"/>');
+		}
+		
+		fwrite($fd,    '</cols>');
+		fwrite($fd,    '<sheetData>');
+		
+		$handle = fopen($sheet_filename.".tmp", "r");
+        while (!feof($handle))
+        {
+            fwrite($fd, fread($handle,16384));
+        }
+        fclose($handle);
+		fclose($fd);
+		
 	}
 
 	protected function writeCell($fd, $row_number, $column_number, $value, $sheet_name)
 	{
 		$cell = self::xlsCell($row_number, $column_number);
 		$s = '0';
+		$curFontName=$this->defaultFontName;
+		$curFontSize=$this->defaultFontSize;
+		
 		if ($this->defaultStyle) {
 			foreach ($this->defaultStyle as $key => $style) {
+				
+				
+				if ($key !== "auto_width" && $key !== "auto_filter"){
+					
 				if (isset($style['sheet'])) {
 					if ($style['sheet'] == $sheet_name) {
 						if (isset($style['allfilleddata'])) {
 							$s = $key + 1;
+							 if (in_array("font",$style))
+							   { 
+								 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+								 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+							   }
+							
+								
 						} else {
 							if (isset($style['columns'])) {
 								if (is_array($style['columns'])) {
-									if (in_array($column_number, $style['columns'])) $s = $key + 1;
+									if (in_array($column_number, $style['columns'])) 
+									{
+										$s = $key + 1;
+										if (in_array("font",$style))
+										   { 
+											 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+											 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+										   }
+										
+											
+									}
 								} else {
-									if ($column_number == $style['columns']) $s = $key + 1;
+									if ($column_number == $style['columns']) {
+										$s = $key + 1;
+										if (in_array("font",$style))
+										   { 
+											 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+											 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+										   }
+										
+											
+										
+									}
 								}
 							} elseif (isset($style['rows'])) {
 								if (is_array($style['rows'])) {
-									if (in_array($row_number, $style['rows'])) $s = $key + 1;
+									
+									if (in_array($row_number, $style['rows'])) {
+									if (in_array("font",$style))
+										   { 
+									   		 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+											 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+										   }
+										
+											
+									$s = $key + 1;
+									}
 								} else {
-									if ($row_number == $style['rows']) $s = $key + 1;
+									if ($row_number == $style['rows']) {
+										if (in_array("font",$style))
+										   { 
+											 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+											 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+										   }
+										
+											
+										
+										$s = $key + 1;
+									}
 								}
 							} elseif (isset($style['cells'])) {
 								if (is_array($style['cells'])) {
-									if (in_array($cell, $style['cells'])) $s = $key + 1;
+									if (in_array($cell, $style['cells'])) {
+										$s = $key + 1;
+										if (in_array("font",$style))
+										   { 
+									  
+											 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+											 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+										   }
+										
+											
+									}
 								} else {
-									if ($cell == $style['cells']) $s = $key + 1;
+									if ($cell == $style['cells']) { 
+										if (in_array("font",$style))
+										   { 
+											 if (array_key_exists('name',$style['font'])) $curFontName=$style['font']['name'];
+											 if (array_key_exists('name',$style['font'])) $curFontSize=$style['font']['size'];
+										   }
+										
+											
+									$s = $key + 1;
+									}
 								}
 							}
 						}
 					}
 				}
 			}
+			}
 		}
+		if (array_key_exists('auto_width',$this->defaultStyle))
+			if (is_array($this->defaultStyle['auto_width']))
+			{
+				if (in_array($column_number,$this->defaultStyle['auto_width']))
+				{
+				$need=false;
+				if (!array_key_exists($column_number,$this->columns_chars_length))
+					$need=true;
+				elseif (strlen($value)>=$this->columns_chars_length[$column_number])
+					$need=true;
+			if ($need) {
+					$cur_width=$this->GetTextWidth($curFontName,$curFontSize,$value);
+			if (!array_key_exists($column_number,$this->columns_width))
+				{ 
+						$this->columns_width[$column_number]=$cur_width;
+						$this->columns_chars_length[$column_number]=strlen($value);
+				}
+			elseif ($cur_width > $this->columns_width[$column_number])
+				{
+						$this->columns_chars_length[$column_number]=strlen($value);
+						$this->columns_width[$column_number]=$cur_width;
+				}
+					  }
+				}
+			}
+			elseif (is_bool($this->defaultStyle['auto_width']) && $this->defaultStyle['auto_width'])
+			{
+				{
+				$need=false;
+				if (!array_key_exists($column_number,$this->columns_chars_length))
+					$need=true;
+				elseif (strlen($value)>=$this->columns_chars_length[$column_number])
+					$need=true;
+			if ($need) {
+					$cur_width=$this->GetTextWidth($curFontName,$curFontSize,$value);
+			if (!array_key_exists($column_number,$this->columns_width))
+				{ 
+						$this->columns_width[$column_number]=$cur_width;
+						$this->columns_chars_length[$column_number]=strlen($value);
+				}
+			elseif ($cur_width > $this->columns_width[$column_number])
+				{
+						$this->columns_chars_length[$column_number]=strlen($value);
+						$this->columns_width[$column_number]=$cur_width;
+				}
+					  }
+				}
+				
+			}
+/*		echo "<pre>
+		Here:";
+		print_r($this->font_max_width);
+		die();*/
 		if (is_numeric($value)) {
 			fwrite($fd,'<c r="'.$cell.'" s="'.$s.'" t="n"><v>'.($value*1).'</v></c>');//int,float, etc
 		} else if (@$cell_format=='date') {
@@ -265,6 +462,7 @@ Class XLSXWriter
 		} else if ($value!==''){
 			fwrite($fd,'<c r="'.$cell.'" s="'.$s.'" t="s"><v>'.self::xmlspecialchars($this->setSharedString($value)).'</v></c>');
 		}
+		
 	}
 
 	protected function writeStylesXML()
